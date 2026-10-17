@@ -422,7 +422,7 @@ app.patch("/api/servers/:id", requireLogin, (req, res) => {
   res.json({ ...publicServer(server), online: false });
 });
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`Alhassan Hosting API: http://127.0.0.1:${PORT}`);
