@@ -37,17 +37,17 @@ db.exec(`
   );
 `);
 
+app.set("trust proxy", 1);
+
 app.use(
   session({
-    secret:
-      process.env.SESSION_SECRET ||
-      "alhassan-local-dev-secret-change-this",
+    secret: process.env.SESSION_SECRET || "alhassan-local-dev-secret-change-this",
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: false,
+      secure: process.env.NODE_ENV === "production",
       maxAge: 24 * 60 * 60 * 1000
     }
   })
@@ -62,21 +62,17 @@ app.get("/api/versions", async (req, res) => {
     const response = await fetch(
       "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
     );
-
     if (!response.ok) throw new Error("Could not fetch versions");
-
     const data = await response.json();
 
     res.json({
       java: data.versions
-        .filter(v => v.type === "release")
-        .map(v => v.id),
+        .filter((version) => version.type === "release")
+        .map((version) => version.id),
       source: "Mojang"
     });
   } catch {
-    res.status(502).json({
-      error: "Could not load Minecraft versions"
-    });
+    res.status(502).json({ error: "Could not load Minecraft versions" });
   }
 });
 
@@ -103,18 +99,12 @@ function getOwnedServer(id, ownerId) {
   ).get(id, ownerId);
 }
 
-// Register
 app.post("/api/auth/register", async (req, res) => {
   try {
     const username =
-      typeof req.body.username === "string"
-        ? req.body.username.trim()
-        : "";
-
+      typeof req.body.username === "string" ? req.body.username.trim() : "";
     const password =
-      typeof req.body.password === "string"
-        ? req.body.password
-        : "";
+      typeof req.body.password === "string" ? req.body.password : "";
 
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
       return res.status(400).json({
@@ -129,27 +119,22 @@ app.post("/api/auth/register", async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
-
     let result;
+
     try {
       result = db.prepare(
         "INSERT INTO users (username, passwordHash) VALUES (?, ?)"
       ).run(username, passwordHash);
     } catch (error) {
       if (error.code === "SQLITE_CONSTRAINT_UNIQUE") {
-        return res.status(409).json({
-          error: "Username already exists"
-        });
+        return res.status(409).json({ error: "Username already exists" });
       }
       throw error;
     }
 
-    const user = {
-      id: Number(result.lastInsertRowid),
-      username
-    };
+    const user = { id: Number(result.lastInsertRowid), username };
 
-    req.session.regenerate(err => {
+    req.session.regenerate((err) => {
       if (err) {
         return res.status(500).json({
           error: "Account created, but session could not start. Please log in."
@@ -157,14 +142,12 @@ app.post("/api/auth/register", async (req, res) => {
       }
 
       req.session.userId = user.id;
-
-      req.session.save(saveErr => {
+      req.session.save((saveErr) => {
         if (saveErr) {
           return res.status(500).json({
             error: "Account created, but session could not be saved. Please log in."
           });
         }
-
         res.status(201).json(user);
       });
     });
@@ -173,45 +156,27 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// Login
 app.post("/api/auth/login", async (req, res) => {
   try {
     const username =
-      typeof req.body.username === "string"
-        ? req.body.username.trim()
-        : "";
-
+      typeof req.body.username === "string" ? req.body.username.trim() : "";
     const password =
-      typeof req.body.password === "string"
-        ? req.body.password
-        : "";
+      typeof req.body.password === "string" ? req.body.password : "";
 
     const user = db.prepare(
       "SELECT * FROM users WHERE username = ? COLLATE NOCASE"
     ).get(username);
 
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
-      return res.status(401).json({
-        error: "Invalid username or password"
-      });
+      return res.status(401).json({ error: "Invalid username or password" });
     }
 
-    req.session.regenerate(err => {
-      if (err) {
-        return res.status(500).json({
-          error: "Could not start session"
-        });
-      }
+    req.session.regenerate((err) => {
+      if (err) return res.status(500).json({ error: "Could not start session" });
 
       req.session.userId = user.id;
-
-      req.session.save(saveErr => {
-        if (saveErr) {
-          return res.status(500).json({
-            error: "Could not save session"
-          });
-        }
-
+      req.session.save((saveErr) => {
+        if (saveErr) return res.status(500).json({ error: "Could not save session" });
         res.json(publicUser(user));
       });
     });
@@ -220,26 +185,18 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// Current account
 app.get("/api/auth/me", (req, res) => {
   const user = db.prepare(
     "SELECT id, username FROM users WHERE id = ?"
   ).get(req.session.userId);
 
-  if (!user) {
-    return res.status(401).json({ error: "Not logged in" });
-  }
-
+  if (!user) return res.status(401).json({ error: "Not logged in" });
   res.json(user);
 });
 
-// Logout
 app.post("/api/auth/logout", (req, res) => {
-  req.session.destroy(err => {
-    if (err) {
-      return res.status(500).json({ error: "Could not log out" });
-    }
-
+  req.session.destroy((err) => {
+    if (err) return res.status(500).json({ error: "Could not log out" });
     res.clearCookie("connect.sid");
     res.json({ success: true });
   });
@@ -250,26 +207,19 @@ function requireLogin(req, res, next) {
     "SELECT id FROM users WHERE id = ?"
   ).get(req.session.userId);
 
-  if (!user) {
-    return res.status(401).json({ error: "Please log in first" });
-  }
-
+  if (!user) return res.status(401).json({ error: "Please log in first" });
   next();
 }
 
-// List this user's servers
 app.get("/api/servers", requireLogin, (req, res) => {
   const servers = db.prepare(
     "SELECT * FROM servers WHERE ownerId = ? ORDER BY id DESC"
   ).all(req.session.userId);
-
   res.json(servers.map(publicServer));
 });
 
-// Create server record
 app.post("/api/servers", requireLogin, (req, res) => {
-  const { name, platform, software, version, ram, autoUpdateBedrock } =
-    req.body;
+  const { name, platform, software, version, ram, autoUpdateBedrock } = req.body;
 
   if (
     typeof name !== "string" || !name.trim() ||
@@ -278,9 +228,7 @@ app.post("/api/servers", requireLogin, (req, res) => {
     typeof version !== "string" ||
     typeof ram !== "string"
   ) {
-    return res.status(400).json({
-      error: "Missing or invalid server settings"
-    });
+    return res.status(400).json({ error: "Missing or invalid server settings" });
   }
 
   try {
@@ -298,33 +246,24 @@ app.post("/api/servers", requireLogin, (req, res) => {
       autoUpdateBedrock ? 1 : 0
     );
 
-    const server = getOwnedServer(
-      Number(result.lastInsertRowid),
-      req.session.userId
-    );
-
+    const server = getOwnedServer(Number(result.lastInsertRowid), req.session.userId);
     res.status(201).json(publicServer(server));
   } catch {
     res.status(500).json({ error: "Could not create server" });
   }
 });
 
-// Delete server record
 app.delete("/api/servers/:id", requireLogin, (req, res) => {
   const result = db.prepare(
     "DELETE FROM servers WHERE id = ? AND ownerId = ?"
   ).run(req.params.id, req.session.userId);
 
-  if (!result.changes) {
-    return res.status(404).json({ error: "Server not found" });
-  }
-
+  if (!result.changes) return res.status(404).json({ error: "Server not found" });
   res.json({ success: true });
 });
 
-// Minecraft process (existing local server)
 const minecraftDir = path.join(
-  process.env.USERPROFILE || process.env.HOME,
+  process.env.USERPROFILE || process.env.HOME || __dirname,
   "AlhassanHosting-Servers",
   "server1"
 );
@@ -332,14 +271,8 @@ const minecraftDir = path.join(
 let minecraftProcess = null;
 
 app.patch("/api/servers/:id", requireLogin, (req, res) => {
-  const server = getOwnedServer(
-    req.params.id,
-    req.session.userId
-  );
-
-  if (!server) {
-    return res.status(404).json({ error: "Server not found" });
-  }
+  const server = getOwnedServer(req.params.id, req.session.userId);
+  if (!server) return res.status(404).json({ error: "Server not found" });
 
   if (typeof req.body.online !== "boolean") {
     return res.status(400).json({ error: "Invalid server state" });
@@ -347,9 +280,7 @@ app.patch("/api/servers/:id", requireLogin, (req, res) => {
 
   if (req.body.online) {
     if (minecraftProcess && minecraftProcess.exitCode === null) {
-      return res.status(409).json({
-        error: "A Minecraft server is already running."
-      });
+      return res.status(409).json({ error: "A Minecraft server is already running." });
     }
 
     if (!fs.existsSync(path.join(minecraftDir, "server.jar"))) {
@@ -370,11 +301,9 @@ app.patch("/api/servers/:id", requireLogin, (req, res) => {
       );
 
       minecraftProcess = child;
-
       child.once("error", () => {
         if (minecraftProcess === child) minecraftProcess = null;
       });
-
       child.once("exit", () => {
         if (minecraftProcess === child) minecraftProcess = null;
       });
@@ -383,36 +312,19 @@ app.patch("/api/servers/:id", requireLogin, (req, res) => {
         "UPDATE servers SET online = 1 WHERE id = ? AND ownerId = ?"
       ).run(server.id, req.session.userId);
 
-      return res.json({
-        ...publicServer(server),
-        online: true
-      });
+      return res.json({ ...publicServer(server), online: true });
     } catch {
-      return res.status(500).json({
-        error: "Could not start Minecraft server."
-      });
+      return res.status(500).json({ error: "Could not start Minecraft server." });
     }
   }
 
   if (minecraftProcess && minecraftProcess.exitCode === null) {
     const child = minecraftProcess;
-
     try {
       child.stdin.write("stop\n");
     } catch {
-      return res.status(500).json({
-        error: "Could not send stop command."
-      });
+      return res.status(500).json({ error: "Could not send stop command." });
     }
-
-    db.prepare(
-      "UPDATE servers SET online = 0 WHERE id = ? AND ownerId = ?"
-    ).run(server.id, req.session.userId);
-
-    return res.json({
-      ...publicServer(server),
-      online: false
-    });
   }
 
   db.prepare(
@@ -422,13 +334,24 @@ app.patch("/api/servers/:id", requireLogin, (req, res) => {
   res.json({ ...publicServer(server), online: false });
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT) || 3001;
+const HOST = "0.0.0.0";
 
-app.listen(PORT, "127.0.0.1", () => {
-  console.log(`Alhassan Hosting API: http://127.0.0.1:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  console.log(`Alhassan Hosting API listening on ${HOST}:${PORT}`);
 });
 
-process.on("SIGINT", () => {
-  db.close();
-  process.exit(0);
-});
+function shutdown() {
+  server.close(() => {
+    try {
+      if (minecraftProcess && minecraftProcess.exitCode === null) {
+        minecraftProcess.stdin.write("stop\n");
+      }
+    } catch {}
+    db.close();
+    process.exit(0);
+  });
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
