@@ -21,6 +21,7 @@
     "react-dom": "latest",
     "typescript": "latest",
     "vite": "latest"
+    "better-sqlite3": "^11.10.0"
   },
   "devDependencies": {
     "@types/react": "latest",
