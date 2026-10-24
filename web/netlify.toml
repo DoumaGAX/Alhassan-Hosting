@@ -1,5 +1,6 @@
-[build]
-  command = "npm install && node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build"
+<pre>[build]
+  base = "Web"
+  command = "npm install && npm run build"
   publish = "dist"
 
 [build.environment]
@@ -8,4 +9,4 @@
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
-  status = 200
+  status = 200</pre>
