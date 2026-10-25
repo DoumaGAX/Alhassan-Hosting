@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const session = require("express-session");
-const Database = require("better-sqlite3");
+const { DatabaseSync } = require("node:sqlite");
 
 const app = express();
 app.use(express.json());
@@ -12,9 +12,8 @@ app.use(express.json());
 const dataDir = path.join(__dirname, "data");
 fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(path.join(dataDir, "alhassan.sqlite"));
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+const db = new DatabaseSync(path.join(dataDir, "alhassan.sqlite"));
+db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (

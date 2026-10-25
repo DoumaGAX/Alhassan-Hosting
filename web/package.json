@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
- "scripts": {
-  "dev": "vite --host 127.0.0.1",
-  "build": "tsc -b && vite build",
-  "preview": "vite preview --host 127.0.0.1",
-  "start": "node server/index.cjs"
-},
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "node server/index.cjs"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
     "@vitejs/plugin-react": "latest",
@@ -20,11 +20,13 @@
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",
-    "vite": "latest",
-    "better-sqlite3": "^11.10.0"
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",
     "@types/react-dom": "latest"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

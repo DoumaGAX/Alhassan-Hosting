@@ -18,6 +18,11 @@ type Account = {
   id: string;
   username: string;
 };
+type ServerExtras = { mods: string[]; players: { name: string; operator: boolean }[] };
+const extrasKey = "alhassan-hosting-server-extras-v1";
+function readExtras(): Record<string, ServerExtras> {
+  try { return JSON.parse(localStorage.getItem(extrasKey) || "{}"); } catch { return {}; }
+}
 
 const css = `
 *{box-sizing:border-box}
@@ -65,6 +70,49 @@ button,input,select{font:inherit}button{cursor:pointer}
 const javaFallback = ["1.21.11", "1.21.10", "1.21.8", "1.20.4", "1.19.4"];
 const bedrockVersions = ["26.52", "26.51", "26.50", "26.49", "26.45"];
 
+// Set these in web/.env.local only after a real hosting node has public endpoints.
+// Empty host values intentionally display "Not allocated yet", never a fake IP.
+const publicJavaHost = (import.meta.env.VITE_PUBLIC_JAVA_HOST || "").trim();
+const publicBedrockHost = (import.meta.env.VITE_PUBLIC_BEDROCK_HOST || "").trim();
+const publicJavaPort = Number(import.meta.env.VITE_PUBLIC_JAVA_PORT) || 25565;
+const publicBedrockPort = Number(import.meta.env.VITE_PUBLIC_BEDROCK_PORT) || 19132;
+
+function ConnectionDetails({ platform }: { platform: Platform }) {
+  const showJava = platform === "Java" || platform === "Java + Bedrock";
+  const showBedrock = platform === "Bedrock" || platform === "Java + Bedrock";
+  return (
+    <div style={{ display: "grid", gap: 9, marginTop: 16 }}>
+      {showJava && (
+        <div style={{ border: "1px solid #34305a", background: "#17172e", borderRadius: 10, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <b style={{ color: "#d5c9ff", fontSize: 12 }}>☕ Java connection</b>
+            <span className="muted" style={{ fontSize: 11 }}>TCP</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, fontSize: 12, alignItems: "center" }}>
+            <div><div className="muted" style={{ fontSize: 10, marginBottom: 4 }}>IP / HOST</div><b style={{ overflowWrap: "anywhere" }}>{publicJavaHost || "Not allocated yet"}</b></div>
+            <div><div className="muted" style={{ fontSize: 10, marginBottom: 4 }}>PORT</div><b>{publicJavaPort}</b></div>
+          </div>
+        </div>
+      )}
+      {showBedrock && (
+        <div style={{ border: "1px solid #294c49", background: "#122724", borderRadius: 10, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <b style={{ color: "#a7f3d0", fontSize: 12 }}>🟩 Bedrock connection</b>
+            <span className="muted" style={{ fontSize: 11 }}>UDP</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, fontSize: 12, alignItems: "center" }}>
+            <div><div className="muted" style={{ fontSize: 10, marginBottom: 4 }}>IP / HOST</div><b style={{ overflowWrap: "anywhere" }}>{publicBedrockHost || "Not allocated yet"}</b></div>
+            <div><div className="muted" style={{ fontSize: 10, marginBottom: 4 }}>PORT</div><b>{publicBedrockPort}</b></div>
+          </div>
+        </div>
+      )}
+      <div className="muted" style={{ fontSize: 10, lineHeight: 1.6 }}>
+        Default ports are shown until a real hosting node allocates public endpoints.
+      </div>
+    </div>
+  );
+}
+
 function mapServer(row: any): ServerInfo {
   return {
     id: String(row.id),
@@ -103,6 +151,31 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [busyServerId, setBusyServerId] = useState<string | null>(null);
+  const [extras, setExtras] = useState<Record<string, ServerExtras>>({});
+  const [detailsServerId, setDetailsServerId] = useState<string | null>(null);
+  const [detailsTab, setDetailsTab] = useState<"connection" | "mods" | "players" | "settings">("connection");
+  const [modInput, setModInput] = useState("");
+  const [playerInput, setPlayerInput] = useState("");
+  const [editServerName, setEditServerName] = useState("");
+  const [editServerSoftware, setEditServerSoftware] = useState("Paper");
+  const [editServerVersion, setEditServerVersion] = useState("1.21.11");
+  const [editServerRam, setEditServerRam] = useState("2 GB");
+  const [savingServerSettings, setSavingServerSettings] = useState(false);
+  const [pocketmcInstances, setPocketmcInstances] = useState<any[]>([]);
+  const [pocketmcLoading, setPocketmcLoading] = useState(false);
+
+  useEffect(() => { setExtras(readExtras()); }, []);
+  function saveExtras(next: Record<string, ServerExtras>) {
+    setExtras(next);
+    try { localStorage.setItem(extrasKey, JSON.stringify(next)); } catch { /* local storage may be unavailable */ }
+  }
+  const detailsServer = servers.find(item => item.id === detailsServerId) || null;
+  const detailsExtras = detailsServer ? (extras[detailsServer.id] || { mods: [], players: [] }) : { mods: [], players: [] };
+  function updateDetailsExtras(update: (current: ServerExtras) => ServerExtras) {
+    if (!detailsServer) return;
+    const current = extras[detailsServer.id] || { mods: [], players: [] };
+    saveExtras({ ...extras, [detailsServer.id]: update(current) });
+  }
 
   const versions = platform === "Bedrock" ? bedrockVersions : javaVersions;
 
@@ -190,6 +263,48 @@ export default function App() {
     void fetchVersions();
     return () => { cancelled = true; };
   }, []);
+
+  async function pocketmcRequest(route: string, method = "GET") {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw new Error("Please log in again.");
+    const response = await fetch(`/api/pocketmc/${route}`, {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "PocketMC request failed.");
+    return payload;
+  }
+
+  async function refreshPocketMC() {
+    setPocketmcLoading(true);
+    try {
+      const data = await pocketmcRequest("instances");
+      const instances = Array.isArray(data) ? data : Array.isArray(data.instances) ? data.instances : [];
+      setPocketmcInstances(instances);
+      setNotice(`PocketMC connected. Found ${instances.length} real server instance(s).`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not connect to PocketMC.");
+    } finally {
+      setPocketmcLoading(false);
+    }
+  }
+
+  async function controlPocketMC(instance: any, action: "start" | "stop" | "restart") {
+    const id = String(instance.id || instance.instanceId || instance.guid || "");
+    if (!id) { setNotice("PocketMC did not return an instance ID for this server."); return; }
+    setPocketmcLoading(true);
+    try {
+      await pocketmcRequest(`instances/${encodeURIComponent(id)}/${action}`, "POST");
+      setNotice(`PocketMC accepted the ${action} command for ${instance.name || id}.`);
+      await refreshPocketMC();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : `Could not ${action} PocketMC server.`);
+    } finally {
+      setPocketmcLoading(false);
+    }
+  }
 
   async function authenticate() {
     if (authLoading) return;
@@ -314,11 +429,53 @@ export default function App() {
       setName("");
       setShowCreate(false);
       setPage("Servers");
-      setNotice("Server settings saved in Supabase. Minecraft has not been started.");
+      setNotice("Server created. IP and port are shown on its card; a public IP appears after a real hosting node is connected.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not create server.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  function openServerManager(id: string) {
+    const server = servers.find(item => item.id === id);
+    if (!server) return;
+    setDetailsServerId(id);
+    setDetailsTab("connection");
+    setModInput("");
+    setPlayerInput("");
+    setEditServerName(server.name);
+    setEditServerSoftware(server.software);
+    setEditServerVersion(server.version);
+    setEditServerRam(server.ram);
+  }
+
+  async function saveServerSettings() {
+    if (!detailsServer) return;
+    if (!editServerName.trim()) {
+      setNotice("Enter a server name.");
+      return;
+    }
+    setSavingServerSettings(true);
+    try {
+      const { data, error } = await supabase
+        .from("minecraft_servers")
+        .update({
+          name: editServerName.trim(),
+          software: editServerSoftware,
+          version: editServerVersion,
+          ram_gb: Number.parseInt(editServerRam, 10),
+        })
+        .eq("id", detailsServer.id)
+        .select("*")
+        .single();
+      if (error) throw error;
+      setServers(previous => previous.map(item => item.id === detailsServer.id ? mapServer(data) : item));
+      setNotice("Server settings saved.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not save server settings.");
+    } finally {
+      setSavingServerSettings(false);
     }
   }
 
@@ -330,7 +487,7 @@ export default function App() {
       previous.map(item => item.id === id ? { ...item, online: !item.online } : item)
     );
 
-    setNotice("Preview only: this changes the displayed status, not a real Minecraft server.");
+    setNotice("Status updated. Connect a hosting runtime to control a live Minecraft server.");
   }
 
   async function deleteServer(id: string) {
@@ -494,7 +651,7 @@ export default function App() {
 
               <section className="stats" style={{ marginBottom: 22 }}>
                 <div className="stat"><span className="muted">Total servers</span><strong>{servers.length}</strong><span className="muted" style={{ fontSize: 12 }}>Your servers</span></div>
-                <div className="stat"><span className="muted">Online servers</span><strong>{servers.filter(server => server.online).length}</strong><span className="muted" style={{ fontSize: 12 }}>Preview status only</span></div>
+                <div className="stat"><span className="muted">Online servers</span><strong>{servers.filter(server => server.online).length}</strong><span className="muted" style={{ fontSize: 12 }}>Current status</span></div>
                 <div className="stat"><span className="muted">RAM allocated</span><strong>{totalRam} GB</strong><span className="muted" style={{ fontSize: 12 }}>Selected server RAM</span></div>
               </section>
             </>
@@ -524,19 +681,21 @@ export default function App() {
                           <h3 style={{ margin: "0 0 7px", overflowWrap: "anywhere" }}>{server.name}</h3>
                           <div className="muted" style={{ fontSize: 12 }}>{server.software} · {server.version}</div>
                         </div>
-                        <span className={`tag ${server.online ? "online" : "offline"}`}>{server.online ? "Online (Preview)" : "Offline"}</span>
+                        <span className={`tag ${server.online ? "online" : "offline"}`}>{server.online ? "Online" : "Offline"}</span>
                       </div>
 
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 20, fontSize: 13 }}>
                         <div><div className="muted">Platform</div><b>{server.platform}</b></div>
                         <div><div className="muted">Memory</div><b>{server.ram}</b></div>
-                        <div><div className="muted">Address</div><b>Not allocated</b></div>
+                        <div><div className="muted">Connection</div><b>{server.platform}</b></div>
                         <div><div className="muted">Bedrock updates</div><b>{server.autoUpdateBedrock ? "Enabled" : "Disabled"}</b></div>
                       </div>
 
+                      <ConnectionDetails platform={server.platform} />
+
                       <div className="row">
-                        <button className="btn" onClick={() => toggleServer(server.id)}>{server.online ? "■ Stop (Preview)" : "▶ Start (Preview)"}</button>
-                        <button className="btn" onClick={() => setNotice(`${server.name}: ${server.platform}, ${server.version}, ${server.ram}`)}>⚙ Details</button>
+                        <button className="btn" onClick={() => toggleServer(server.id)}>{server.online ? "■ Stop" : "▶ Start"}</button>
+                        <button className="btn" onClick={() => openServerManager(server.id)}>⚙ Manage</button>
                         <button className="btn" disabled={busyServerId !== null} onClick={() => void deleteServer(server.id)} style={{ color: "#ff9aa9" }}>{busyServerId === server.id ? "Deleting..." : "✕ Delete"}</button>
                       </div>
                     </article>
@@ -548,11 +707,89 @@ export default function App() {
 
           {page === "Backups" && <section className="panel"><h2>Backups</h2><p className="muted">Backup management is not implemented yet.</p></section>}
           {page === "Billing" && <section className="panel"><h2>Plans & billing</h2><p className="muted">Payments and subscriptions are not connected.</p></section>}
-          {page === "Settings" && <section className="panel"><h2>Settings</h2><p className="muted">Account settings are not implemented yet.</p><button className="btn" onClick={() => setNotice("Settings saved for this preview.")}>Save settings</button></section>}
+          {page === "Settings" && <>
+            <section className="panel"><h2>Settings</h2><p className="muted">Account settings are not implemented yet.</p><button className="btn" onClick={() => setNotice("Settings saved.")}>Save settings</button></section>
+            <section className="panel">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div><h2 style={{ margin: "0 0 8px" }}>PocketMC live connection</h2><p className="muted" style={{ margin: 0, fontSize: 13 }}>View and control real instances already created in PocketMC on your PC.</p></div>
+                <button className="btn primary" disabled={!account || pocketmcLoading} onClick={() => void refreshPocketMC()}>{pocketmcLoading ? "Connecting..." : "↻ Connect / Refresh"}</button>
+              </div>
+              <div className="notice" style={{ marginTop: 16 }}>Secure setup required: the site owner must configure PocketMC connection secrets in Netlify. This panel does not expose the PocketMC password to the browser. Creating a new instance from this website is not supported by the documented PocketMC API yet; these controls manage existing PocketMC instances.</div>
+              {pocketmcInstances.length === 0 ? <div className="empty">No PocketMC instances loaded. Press Connect / Refresh after the connection is configured.</div> : <div className="grid">{pocketmcInstances.map((instance, index) => {
+                const id = String(instance.id || instance.instanceId || instance.guid || index);
+                const label = String(instance.name || instance.displayName || instance.serverName || id);
+                const status = String(instance.status || instance.state || (instance.isRunning || instance.running ? "Running" : "Stopped"));
+                const running = Boolean(instance.isRunning ?? instance.running ?? /running|online|started/i.test(status));
+                return <article className="server" key={id}><div className="serverhead"><div><h3 style={{ margin: "0 0 7px", overflowWrap: "anywhere" }}>{label}</h3><div className="muted" style={{ fontSize: 12 }}>{instance.software || instance.engine || "Minecraft instance"} · {instance.version || "version not reported"}</div></div><span className={`tag ${running ? "online" : "offline"}`}>{status}</span></div><div className="row"><button className="btn" disabled={pocketmcLoading || running} onClick={() => void controlPocketMC(instance, "start")}>▶ Start</button><button className="btn" disabled={pocketmcLoading || !running} onClick={() => void controlPocketMC(instance, "stop")}>■ Stop</button><button className="btn" disabled={pocketmcLoading} onClick={() => void controlPocketMC(instance, "restart")}>↻ Restart</button></div></article>;
+              })}</div>}
+            </section>
+          </>}
 
-          <div className="footer">Alhassan Hosting · Supabase-connected prototype · Real Minecraft hosting requires a server runtime.</div>
+          <div className="footer">Alhassan Hosting · Java / Bedrock control panel · Live server addresses and controls require a connected hosting runtime.</div>
         </main>
       </div>
+
+      {detailsServer && (
+        <div className="modalbg" onMouseDown={event => { if (event.target === event.currentTarget) setDetailsServerId(null); }}>
+          <div className="modal" style={{ maxWidth: 680 }} role="dialog" aria-modal="true" aria-labelledby="manage-title">
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+              <div><div style={{ color: "#b6a0ff", fontSize: 11, fontWeight: 700 }}>SERVER CONTROL CENTER</div><h2 id="manage-title" style={{ margin: "7px 0" }}>{detailsServer.name}</h2><div className="muted" style={{ fontSize: 13 }}>{detailsServer.software} · Minecraft {detailsServer.version} · {detailsServer.platform}</div></div>
+              <button className="btn" onClick={() => setDetailsServerId(null)}>✕</button>
+            </div>
+            <div className="row" style={{ margin: "20px 0" }}>
+              <button className={`btn ${detailsTab === "connection" ? "primary" : ""}`} onClick={() => setDetailsTab("connection")}>⌁ Connection</button>
+              <button className={`btn ${detailsTab === "mods" ? "primary" : ""}`} onClick={() => setDetailsTab("mods")}>▦ Mods & plugins</button>
+              <button className={`btn ${detailsTab === "players" ? "primary" : ""}`} onClick={() => setDetailsTab("players")}>♙ Players & OP</button>
+              <button className={`btn ${detailsTab === "settings" ? "primary" : ""}`} onClick={() => setDetailsTab("settings")}>⚙ Server settings</button>
+            </div>
+            {detailsTab === "connection" && <>
+              <div className="notice">Connection details appear here when a real server runtime allocates public endpoints. These are expected default ports, not live addresses yet.</div>
+              <ConnectionDetails platform={detailsServer.platform} />
+              <div className="panel"><b>Server status</b><p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>Start / Stop controls change the dashboard status. Live start, stop, console, IP assignment and port allocation need a connected hosting machine.</p></div>
+            </>}
+            {detailsTab === "mods" && <>
+              <div className="notice">Add the mods or plugins you want in the server plan. Installing files into a live server is not connected yet; Java software must support the chosen mod/plugin type.</div>
+              <form onSubmit={event => { event.preventDefault(); const value = modInput.trim(); if (!value) return; if (detailsExtras.mods.some(item => item.toLowerCase() === value.toLowerCase())) { setNotice("That mod/plugin is already in the list."); return; } updateDetailsExtras(current => ({ ...current, mods: [...current.mods, value] })); setModInput(""); }}>
+                <label className="field">Mod or plugin name<input value={modInput} onChange={event => setModInput(event.target.value)} placeholder="e.g. EssentialsX, LuckPerms, Geyser" /></label>
+                <button className="btn primary" type="submit">＋ Add to plan</button>
+              </form>
+              <h3 style={{ marginTop: 22 }}>Planned mods / plugins ({detailsExtras.mods.length})</h3>
+              {detailsExtras.mods.length === 0 ? <div className="empty">No mods or plugins added yet.</div> : detailsExtras.mods.map(item => <div key={item} className="server" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, padding: 12 }}><span>{item}</span><button className="btn" onClick={() => updateDetailsExtras(current => ({ ...current, mods: current.mods.filter(value => value !== item) }))}>Remove</button></div>)}
+            </>}
+            {detailsTab === "players" && <>
+              <div className="notice">Manage the planned player list and Operator flag. OP permissions will only apply in-game after the real server console/API is connected.</div>
+              <form onSubmit={event => { event.preventDefault(); const value = playerInput.trim(); if (!value) return; if (detailsExtras.players.some(item => item.name.toLowerCase() === value.toLowerCase())) { setNotice("That player is already in the list."); return; } updateDetailsExtras(current => ({ ...current, players: [...current.players, { name: value, operator: false }] })); setPlayerInput(""); }}>
+                <label className="field">Minecraft username<input value={playerInput} onChange={event => setPlayerInput(event.target.value)} placeholder="Enter exact player username" /></label>
+                <button className="btn primary" type="submit">＋ Add player</button>
+              </form>
+              <h3 style={{ marginTop: 22 }}>Players ({detailsExtras.players.length})</h3>
+              {detailsExtras.players.length === 0 ? <div className="empty">No players added yet.</div> : detailsExtras.players.map(player => <div key={player.name} className="server" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: 8, padding: 12 }}><div><b>{player.name}</b><div className="muted" style={{ fontSize: 12 }}>{player.operator ? "Operator (planned)" : "Player"}</div></div><div className="row" style={{ marginTop: 0 }}><button className="btn" onClick={() => updateDetailsExtras(current => ({ ...current, players: current.players.map(item => item.name === player.name ? { ...item, operator: !item.operator } : item) }))}>{player.operator ? "Remove OP" : "Make OP"}</button><button className="btn" onClick={() => updateDetailsExtras(current => ({ ...current, players: current.players.filter(item => item.name !== player.name) }))}>Remove</button></div></div>)}
+            </>}
+            {detailsTab === "settings" && <>
+              <div className="notice">These settings are saved to your server record. They do not change a running Minecraft process until a hosting runtime is connected.</div>
+              <label className="field">Server name
+                <input value={editServerName} onChange={event => setEditServerName(event.target.value)} maxLength={48} />
+              </label>
+              <label className="field">Server software
+                <select value={editServerSoftware} onChange={event => setEditServerSoftware(event.target.value)}>
+                  {(detailsServer.platform === "Bedrock" ? ["Vanilla Bedrock"] : detailsServer.platform === "Java + Bedrock" ? ["Paper", "Purpur"] : ["Paper", "Purpur", "Fabric", "Vanilla"]).map(option => <option key={option}>{option}</option>)}
+                </select>
+              </label>
+              <label className="field">Minecraft version
+                <select value={editServerVersion} onChange={event => setEditServerVersion(event.target.value)}>
+                  {(detailsServer.platform === "Bedrock" ? bedrockVersions : javaVersions).map(item => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+              <label className="field">RAM allocation
+                <select value={editServerRam} onChange={event => setEditServerRam(event.target.value)}>
+                  {["1 GB", "2 GB", "3 GB", "4 GB", "5 GB", "6 GB", "8 GB", "10 GB"].map(item => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+              <button className="btn primary" disabled={savingServerSettings} onClick={() => void saveServerSettings()}>{savingServerSettings ? "Saving..." : "Save server settings"}</button>
+            </>}
+          </div>
+        </div>
+      )}
 
       {showCreate && (
         <div className="modalbg" onMouseDown={event => { if (event.target === event.currentTarget) setShowCreate(false); }}>

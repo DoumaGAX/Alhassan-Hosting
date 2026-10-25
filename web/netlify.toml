@@ -1,20 +1,15 @@
-<<<<<<< HEAD
-<pre>[build]
-=======
 [build]
->>>>>>> d1efc6987d97ad1d4a7c59317a39ce6fc52acea7
-  base = "Web"
+  base = "."
   command = "npm install && npm run build"
   publish = "dist"
 
 [build.environment]
-  NODE_ENV = "development"
+  NODE_VERSION = "20"
+
+[functions]
+  directory = "netlify/functions"
 
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
-<<<<<<< HEAD
-  status = 200</pre>
-=======
   status = 200
->>>>>>> d1efc6987d97ad1d4a7c59317a39ce6fc52acea7
